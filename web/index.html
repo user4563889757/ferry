@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Ferry — resumable local file transfer.">
+  <title>Ferry — local file transfer</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <a class="brand" href="/" aria-label="Ferry home">
+      <span class="mark" aria-hidden="true">⇄</span>
+      <span>Ferry</span>
+    </a>
+    <div class="actions">
+      <span id="status" class="status">connecting</span>
+      <button id="share-btn" class="btn" type="button">Share</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="intro">
+      <h1>Move files across the room.</h1>
+      <p>Resumable transfers over your local network. Files stay on this machine until you delete them.</p>
+      <p id="server-line" class="muted">Connecting…</p>
+    </section>
+
+    <section id="drop-zone" class="drop" tabindex="0" role="button">
+      <strong>Drop files to send</strong>
+      <span>or click to browse — any type, any size</span>
+      <small>Progress is saved after every chunk, so interrupted uploads resume.</small>
+    </section>
+    <input id="file-input" type="file" multiple hidden>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Sending</h2>
+        <span id="queue-count" class="muted">nothing in flight</span>
+      </div>
+      <div id="queue" class="list"></div>
+      <p id="queue-empty" class="empty">No transfers yet.</p>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Files here</h2>
+        <button id="refresh-btn" class="btn small" type="button">Refresh</button>
+      </div>
+      <p id="files-summary" class="muted">waiting for the first file</p>
+      <div id="file-list" class="list"></div>
+      <p id="files-empty" class="empty">Files you send appear here for any device on this Ferry.</p>
+    </section>
+
+    <details class="panel">
+      <summary><strong>Bluetooth</strong> <span class="muted">— use the same resumable transfer over a Bluetooth PAN</span></summary>
+      <p class="muted">Pair both devices, enable Bluetooth tethering on one of them, join the PAN from the other, then open the address marked <em>Bluetooth PAN</em> in Share. Direct OBEX Bluetooth transfers cannot resume, so Ferry uses IP over Bluetooth instead.</p>
+    </details>
+  </main>
+
+  <footer>Open source · MIT · no cloud</footer>
+
+  <dialog id="share-dialog">
+    <div class="dialog-head">
+      <h2>Bring another device</h2>
+      <button class="close" type="button" data-close="share-dialog" aria-label="Close">×</button>
+    </div>
+    <div class="share-grid">
+      <img id="qr-image" width="220" height="220" alt="QR code for this Ferry">
+      <div>
+        <p class="label">Links</p>
+        <div id="share-urls" class="urls"></div>
+        <button id="copy-link" class="btn primary" type="button">Copy link</button>
+        <p class="muted small">The link contains this session's key. Keep it within people you trust.</p>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="unlock-dialog">
+    <form id="unlock-form" class="unlock">
+      <h2>Enter the share key</h2>
+      <p class="muted">It was printed in the terminal when Ferry started.</p>
+      <input id="key-input" type="password" autocomplete="off" spellcheck="false" placeholder="Share key" required>
+      <p id="unlock-error" class="error" hidden>That key did not work.</p>
+      <button class="btn primary" type="submit">Unlock</button>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
