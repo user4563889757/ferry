@@ -1,0 +1,8 @@
+name = "ferry-cloud"
+compatibility_date = "2026-11-01"
+pages_build_output_dir = "./web"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ferry"
+database_id = "d15e8ee0-d03a-4297-82b2-2900518220ea"

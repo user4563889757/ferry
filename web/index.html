@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="Ferry — resumable local file transfer.">
-  <title>Ferry — local file transfer</title>
+  <meta name="description" content="Ferry — resumable file transfer.">
+  <title>Ferry — file transfer</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
 </head>
@@ -24,14 +24,14 @@
   <main>
     <section class="intro">
       <h1>Move files across the room.</h1>
-      <p>Resumable transfers over your local network. Files stay on this machine until you delete them.</p>
+      <p id="lede">Drop anything here. It stays on this Ferry until you delete it, and interrupted uploads resume where they stopped.</p>
       <p id="server-line" class="muted">Connecting…</p>
     </section>
 
     <section id="drop-zone" class="drop" tabindex="0" role="button">
       <strong>Drop files to send</strong>
-      <span>or click to browse — any type, any size</span>
-      <small>Progress is saved after every chunk, so interrupted uploads resume.</small>
+      <span>or click to browse — any file type</span>
+      <small>Progress is saved after every 1 MB chunk, so interrupted uploads resume.</small>
     </section>
     <input id="file-input" type="file" multiple hidden>
 
@@ -54,13 +54,13 @@
       <p id="files-empty" class="empty">Files you send appear here for any device on this Ferry.</p>
     </section>
 
-    <details class="panel">
+    <details id="bt-panel" class="panel">
       <summary><strong>Bluetooth</strong> <span class="muted">— use the same resumable transfer over a Bluetooth PAN</span></summary>
       <p class="muted">Pair both devices, enable Bluetooth tethering on one of them, join the PAN from the other, then open the address marked <em>Bluetooth PAN</em> in Share. Direct OBEX Bluetooth transfers cannot resume, so Ferry uses IP over Bluetooth instead.</p>
     </details>
   </main>
 
-  <footer>Open source · MIT · no cloud</footer>
+  <footer id="footer-note">Open source · MIT · resumable transfers</footer>
 
   <dialog id="share-dialog">
     <div class="dialog-head">
@@ -73,7 +73,7 @@
         <p class="label">Links</p>
         <div id="share-urls" class="urls"></div>
         <button id="copy-link" class="btn primary" type="button">Copy link</button>
-        <p class="muted small">The link contains this session's key. Keep it within people you trust.</p>
+        <p id="share-copy" class="muted small">The link contains this session's key. Keep it within people you trust.</p>
       </div>
     </div>
   </dialog>
@@ -81,7 +81,7 @@
   <dialog id="unlock-dialog">
     <form id="unlock-form" class="unlock">
       <h2>Enter the share key</h2>
-      <p class="muted">It was printed in the terminal when Ferry started.</p>
+      <p class="muted">It was printed when Ferry started, or shared with you by the owner.</p>
       <input id="key-input" type="password" autocomplete="off" spellcheck="false" placeholder="Share key" required>
       <p id="unlock-error" class="error" hidden>That key did not work.</p>
       <button class="btn primary" type="submit">Unlock</button>

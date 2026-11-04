@@ -1,10 +1,11 @@
 const $ = (selector) => document.querySelector(selector);
 const KEY_STORE = "ferry.key";
-const CHUNK = 4 * 1024 * 1024;
+const CHUNK = 1024 * 1024;
 
 const state = {
   key: localStorage.getItem(KEY_STORE) || "",
   info: null,
+  capacity: 0,
   files: [],
   queue: [],
   pumping: false,
@@ -139,9 +140,19 @@ function openShare() {
 
 async function loadInfo() {
   state.info = await api("/api/info");
+  state.capacity = state.info.capacity || 0;
   setStatus("online", state.info.device_name || "online");
   const count = state.info.interfaces.filter((item) => !item.bluetooth).length;
-  $("#server-line").textContent = `${state.info.device_name} · v${state.info.version} · ${count || 1} network address${count === 1 ? "" : "es"}`;
+  $("server-line").textContent = `${state.info.device_name} · v${state.info.version} · ${count || 1} network address${count === 1 ? "" : "es"}`;
+  const cloud = state.info.mode === "cloud";
+  $("#bt-panel").hidden = cloud;
+  if (cloud) {
+    $("#lede").textContent =
+      "Drop anything here. It is stored on this Ferry until you delete it, and interrupted uploads resume where they stopped.";
+    $("#footer-note").textContent = "Open source · MIT · Cloudflare-hosted";
+    $("#share-copy").textContent =
+      "The link contains this session's key. Anyone with it can reach this Ferry from anywhere.";
+  }
 }
 
 async function loadFiles() {
@@ -239,10 +250,16 @@ function renderFiles(stats) {
   $("#files-empty").hidden = files.length > 0;
 
   const complete = stats ? stats.count : files.filter((file) => file.status === "complete").length;
-  const bytes = stats ? stats.bytes : files.reduce((sum, file) => sum + (file.status === "complete" ? file.size : 0), 0);
-  $("#files-summary").textContent = complete
-    ? `${complete} file${complete === 1 ? "" : "s"} · ${fmtBytes(bytes)}`
-    : "waiting for the first file";
+  const bytes = stats ? stats.bytes : files.reduce((sum, file) => sum + Number(file.offset || 0), 0);
+  const capacity = (stats && stats.capacity) || state.capacity || 0;
+  if (complete || bytes) {
+    const percent = capacity ? Math.round((bytes / capacity) * 100) : 0;
+    const usage = capacity ? ` · ${fmtBytes(bytes)} of ${fmtBytes(capacity)} (${percent}%)` : ` · ${fmtBytes(bytes)}`;
+    const warning = capacity && bytes / capacity >= 0.85 ? " · almost full" : "";
+    $("#files-summary").textContent = `${complete} file${complete === 1 ? "" : "s"}${usage}${warning}`;
+  } else {
+    $("#files-summary").textContent = "waiting for the first file";
+  }
 }
 
 function queueRow(item) {
@@ -358,9 +375,16 @@ function resumeFile(file) {
 }
 
 async function upload(item) {
+  const file = item.file;
+  const limit = state.info && state.info.max_file;
+  if (limit && file.size > limit) {
+    item.status = "error";
+    item.error = `Files are limited to ${fmtBytes(limit)} on this Ferry`;
+    renderQueue();
+    return;
+  }
   item.status = "preparing";
   renderQueue();
-  const file = item.file;
   const fingerprint = `${file.name}:${file.size}:${file.lastModified}`;
   let meta = await api("/api/uploads", {
     method: "POST",
@@ -480,7 +504,7 @@ async function boot() {
     if (!state.poll) {
       state.poll = setInterval(() => {
         if (document.visibilityState === "visible") loadFiles().catch(() => {});
-      }, 4000);
+      }, 10000);
     }
   } catch (error) {
     if (error.status !== 401) {
