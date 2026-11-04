@@ -5,7 +5,7 @@
   "description": "Ferry on Cloudflare Pages and D1",
   "scripts": {
     "dev": "wrangler pages dev web --port 8791 --ip 127.0.0.1",
-    "deploy": "wrangler pages deploy web --project-name ferry-cloud --branch main --commit-dirty=true"
+    "deploy": "wrangler pages deploy web --project-name getferry --branch main --commit-dirty=true"
   },
   "dependencies": {
     "qrcode-generator": "^2.0.4"

@@ -3,8 +3,9 @@
 A tiny file ferry. Send any file between devices, or run it in the cloud so the
 link keeps working when your laptop is off.
 
-**Live cloud version:** <https://ferry-cloud.pages.dev> (free Cloudflare Pages +
-D1, no credit card). Enter the share key to unlock it.
+**Live cloud version:** <https://getferry.pages.dev> (free Cloudflare Pages +
+D1, no credit card). Enter the share key to unlock it. The old
+`ferry-cloud.pages.dev` address redirects here.
 
 - Resumable uploads with server-persisted offsets
 - Range-based downloads (pause/resume, seek in large files)
@@ -58,14 +59,14 @@ npx wrangler d1 create ferry
 npx wrangler d1 execute ferry --remote --file=schema.sql
 
 # 4. Create the Pages project (once)
-npx wrangler pages project create ferry-cloud --production-branch main
+npx wrangler pages project create getferry --production-branch main
 
 # 5. Set the share key and display name
-npx wrangler pages secret put FERRY_KEY --project-name ferry-cloud
-npx wrangler pages secret put FERRY_NAME --project-name ferry-cloud
+npx wrangler pages secret put FERRY_KEY --project-name getferry
+npx wrangler pages secret put FERRY_NAME --project-name getferry
 
 # 6. Deploy to the production branch
-npx wrangler pages deploy web --project-name ferry-cloud --branch main --commit-dirty=true
+npx wrangler pages deploy web --project-name getferry --branch main --commit-dirty=true
 ```
 
 `wrangler d1 create ferry` prints a `database_id`. Put it in `wrangler.toml`
@@ -78,7 +79,7 @@ database_name = "ferry"
 database_id = "paste-the-id-here"
 ```
 
-The site is then live at `https://ferry-cloud.pages.dev` (or the project name you
+The site is then live at `https://getferry.pages.dev` (or the project name you
 chose). Open it on your phone and enter the `FERRY_KEY` you set in step 5.
 
 After the first deploy, updating is just:
@@ -87,7 +88,7 @@ After the first deploy, updating is just:
 npm run deploy
 ```
 
-`npm run deploy` is already set to `ferry-cloud` and `--branch main`. If you
+`npm run deploy` is already set to `getferry` and `--branch main`. If you
 used a different project name, change it in `package.json`.
 
 ### Local development for the cloud version
