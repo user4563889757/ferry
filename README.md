@@ -25,16 +25,20 @@ Free-tier limits that shaped the implementation:
 |---|---|
 | D1 storage per database | 500 MB |
 | D1 storage per account | 5 GB total |
-| Max file size here | 400 MB |
-| Upload budget here | 450 MB total |
+| Max file size here | 350 MB |
+| Upload budget here | 400 MB total |
 | D1 row size | 2 MB |
 | D1 rows written | 100,000/day |
 | D1 rows read | 5,000,000/day |
 | Pages requests | 100,000/day (static requests unmetered) |
 
-Ferry enforces a **450 MB upload budget** and a **400 MB per-file cap** instead
+Ferry enforces a **400 MB upload budget** and a **350 MB per-file cap** instead
 of using the full 500 MB database. That leaves room for SQLite pages and
 metadata, so an upload cannot fill the database and start failing halfway.
+
+Downloads fetch eight 1 MiB chunks per D1 query. The free plan allows 50 D1
+queries per request, so a 350 MB download uses at most 45 queries instead of
+350, and still streams with backpressure.
 
 ### Deploy
 
@@ -100,7 +104,7 @@ Open <http://127.0.0.1:8791/> and use `testkey123`.
 
 - Upload chunks must start on a 1 MiB boundary. The UI always does this; it is
   the reason the API rejects an unaligned `offset` with `400 invalid_offset`.
-- `GET /api/files` returns the newest 200 entries to stay well inside the free
+- `GET /api/files` returns the newest 100 entries to stay well inside the free
   daily row-read allowance.
 - Files stay until someone presses **Delete**. There is no automatic expiry.
 - The share key is a global secret. Rotate it with

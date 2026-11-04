@@ -2,7 +2,7 @@ import { MAX_DB, MAX_FILE, json, nowSeconds } from "../../lib/http.js";
 
 export async function onRequestGet({ env }) {
   const { results } = await env.DB.prepare(
-    "SELECT * FROM files ORDER BY created_at DESC, name ASC LIMIT 200",
+    "SELECT * FROM files ORDER BY created_at DESC, name ASC LIMIT 100",
   ).all();
   const files = results || [];
   const complete = files.filter((file) => file.status === "complete");

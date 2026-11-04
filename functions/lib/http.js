@@ -1,8 +1,9 @@
 export const CHUNK = 1024 * 1024;
 // Keep a safety margin below the 500 MB free D1 database limit.
-export const MAX_DB = 450 * 1024 * 1024;
-// Leave room for SQLite pages and metadata inside the same database.
-export const MAX_FILE = 400 * 1024 * 1024;
+export const MAX_DB = 400 * 1024 * 1024;
+// Downloads fetch chunks in batches so one request stays under the free
+// plan's 50 D1 queries per invocation.
+export const MAX_FILE = 350 * 1024 * 1024;
 
 export function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {

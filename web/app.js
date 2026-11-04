@@ -504,7 +504,7 @@ async function boot() {
     if (!state.poll) {
       state.poll = setInterval(() => {
         if (document.visibilityState === "visible") loadFiles().catch(() => {});
-      }, 10000);
+      }, 15000);
     }
   } catch (error) {
     if (error.status !== 401) {

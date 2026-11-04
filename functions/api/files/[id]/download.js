@@ -62,6 +62,9 @@ export async function onRequestGet(context) {
 
   let current = start;
   let finished = meta.size === 0;
+  const lastIndex = Math.floor(end / CHUNK);
+  const cache = new Map();
+  const BATCH = 8;
   const stream = new ReadableStream({
     async pull(controller) {
       if (finished) {
@@ -75,18 +78,25 @@ export async function onRequestGet(context) {
       }
 
       const index = Math.floor(current / CHUNK);
-      const row = await env.DB.prepare(
-        "SELECT data FROM chunks WHERE file_id = ? AND idx = ?",
-      )
-        .bind(meta.id, index)
-        .first();
+      if (!cache.has(index)) {
+        const last = Math.min(lastIndex, index + BATCH - 1);
+        const { results } = await env.DB.prepare(
+          "SELECT idx, data FROM chunks WHERE file_id = ? AND idx >= ? AND idx <= ? ORDER BY idx",
+        )
+          .bind(meta.id, index, last)
+          .all();
+        cache.clear();
+        for (const row of results || []) {
+          cache.set(Number(row.idx), new Uint8Array(row.data));
+        }
+      }
 
-      if (!row || !row.data) {
+      const bytes = cache.get(index);
+      if (!bytes) {
         controller.error(new Error("missing chunk"));
         return;
       }
 
-      const bytes = new Uint8Array(row.data);
       const chunkStart = index * CHUNK;
       const from = Math.max(0, start - chunkStart);
       const to = Math.min(bytes.length, end - chunkStart + 1);
