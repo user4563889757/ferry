@@ -7,6 +7,8 @@ link keeps working when your laptop is off.
 D1, no credit card). Enter the share key to unlock it. The old
 `ferry-cloud.pages.dev` address redirects here.
 
+Continuing the project elsewhere? Read [`HANDOFF.md`](HANDOFF.md) first.
+
 - Resumable uploads with server-persisted offsets
 - Range-based downloads (pause/resume, seek in large files)
 - Share link and QR code
