@@ -70,12 +70,16 @@ async fn run() -> Result<(), Box<dyn Error>> {
             if key.chars().any(char::is_control) {
                 return Err("the share key cannot contain control characters".into());
             }
+            if key.chars().count() < 16 {
+                return Err("the share key must be at least 16 characters".into());
+            }
             if key.chars().count() > 128 {
                 return Err("the share key must be 128 characters or fewer".into());
             }
             key
         }
-        None => Uuid::new_v4().simple().to_string()[..16].to_string(),
+        // 128 bits of randomness. The full UUID is 32 hex characters.
+        None => Uuid::new_v4().simple().to_string(),
     };
 
     let device_name = cli.name.unwrap_or_else(net::device_name);
@@ -86,12 +90,18 @@ async fn run() -> Result<(), Box<dyn Error>> {
         device_name: Arc::from(device_name.as_str()),
         interfaces: Arc::new(interfaces.clone()),
         started_at: ferry::store::now_secs(),
+        auth_failures: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
     println!("Ferry {VERSION} - local file transfer");
     println!("Device: {device_name}");
     println!("Data:   {}", directory.display());
     println!("Key:    {key}");
+    if cli.bind.is_unspecified() {
+        println!();
+        println!("Listening on every network interface. Use --bind 127.0.0.1 to");
+        println!("restrict it to this machine, and keep the key private.");
+    }
     println!();
     println!("Open on another device on the same network:");
     for interface in &interfaces {
@@ -112,9 +122,12 @@ async fn run() -> Result<(), Box<dyn Error>> {
         }
     };
 
-    axum::serve(listener, api::router(state))
-        .with_graceful_shutdown(shutdown)
-        .await?;
+    axum::serve(
+        listener,
+        api::router(state).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown)
+    .await?;
     Ok(())
 }
 

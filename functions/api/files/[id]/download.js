@@ -1,6 +1,6 @@
 import { CHUNK, apiError, getMeta } from "../../../lib/http.js";
 
-function parseRange(value, size) {
+export function parseRange(value, size) {
   if (!value || size === 0) return null;
   const match = /^bytes=(\d*)-(\d*)$/.exec(value.trim());
   if (!match) throw new Error("invalid range");
@@ -24,7 +24,7 @@ function parseRange(value, size) {
   return { start, end };
 }
 
-function contentDisposition(name) {
+export function contentDisposition(name) {
   const fallback = Array.from(name)
     .map((character) =>
       /[\x20-\x7e]/.test(character) && character !== '"' && character !== "\\"
@@ -115,12 +115,16 @@ export async function onRequestGet(context) {
     },
   });
 
+  // Always download as an opaque attachment. Never echo a user-supplied MIME
+  // type: an uploaded HTML or SVG file must not execute on the site's origin.
   const headers = new Headers({
-    "content-type": meta.mime || "application/octet-stream",
+    "content-type": "application/octet-stream",
     "content-length": String(length),
     "accept-ranges": "bytes",
     "cache-control": "no-store",
     "content-disposition": contentDisposition(meta.name),
+    "content-security-policy": "sandbox; default-src 'none'",
+    "x-content-type-options": "nosniff",
     etag: `"${meta.id}-${meta.size}"`,
   });
   if (status === 206) {

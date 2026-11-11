@@ -2,15 +2,28 @@
   "name": "ferry-cloudflare",
   "version": "0.2.0",
   "private": true,
+  "type": "module",
   "description": "Ferry on Cloudflare Pages and D1",
+  "license": "MIT",
+  "repository": "https://github.com/user4563889757/ferry",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "wrangler pages dev web --port 8791 --ip 127.0.0.1",
-    "deploy": "wrangler pages deploy web --project-name getferry --branch main --commit-dirty=true"
+    "deploy": "wrangler pages deploy web --project-name getferry --branch main --commit-dirty=true",
+    "test": "node --test tests/*.test.js",
+    "check": "sh scripts/check-js.sh && npm test",
+    "audit": "npm audit --omit=dev",
+    "link": "sh scripts/show-link.sh",
+    "key:rotate": "sh scripts/rotate-key.sh",
+    "hooks:install": "sh scripts/install-hooks.sh",
+    "secrets:check": "sh scripts/check-secrets.sh"
   },
   "dependencies": {
-    "qrcode-generator": "^2.0.4"
+    "qrcode-generator": "2.0.4"
   },
   "devDependencies": {
-    "wrangler": "^4.157.0"
+    "wrangler": "4.157.0"
   }
 }

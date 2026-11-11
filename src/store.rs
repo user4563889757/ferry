@@ -87,6 +87,9 @@ impl Store {
         let blob_dir = root.join("blobs");
         fs::create_dir_all(&meta_dir).await?;
         fs::create_dir_all(&blob_dir).await?;
+        set_mode(&root, 0o700).await?;
+        set_mode(&meta_dir, 0o700).await?;
+        set_mode(&blob_dir, 0o700).await?;
 
         let store = Self {
             root,
@@ -218,7 +221,9 @@ impl Store {
             fingerprint,
         };
 
-        File::create(self.blob_path(&id)).await?;
+        let blob = self.blob_path(&id);
+        File::create(&blob).await?;
+        set_mode(&blob, 0o600).await?;
         self.write_meta(&meta).await?;
         Ok(meta)
     }
@@ -331,6 +336,7 @@ impl Store {
         let final_path = self.meta_path(&meta.id);
 
         let mut file = File::create(&temporary).await?;
+        set_mode(&temporary, 0o600).await?;
         file.write_all(&bytes).await?;
         file.sync_all().await?;
         drop(file);
@@ -346,6 +352,8 @@ impl Store {
                 continue;
             }
             let blob_path = self.blob_path(&meta.id);
+            let _ = set_mode(&self.meta_path(&meta.id), 0o600).await;
+            let _ = set_mode(&blob_path, 0o600).await;
             let actual = match fs::metadata(&blob_path).await {
                 Ok(metadata) => metadata.len(),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => 0,
@@ -384,6 +392,17 @@ pub fn now_secs() -> u64 {
         .unwrap_or_default()
 }
 
+#[cfg(unix)]
+async fn set_mode(path: &Path, mode: u32) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).await
+}
+
+#[cfg(not(unix))]
+async fn set_mode(_path: &Path, _mode: u32) -> io::Result<()> {
+    Ok(())
+}
+
 fn clean_name(raw: &str) -> String {
     let base = raw
         .rsplit(|character| character == '/' || character == '\\')
@@ -391,9 +410,20 @@ fn clean_name(raw: &str) -> String {
         .unwrap_or(raw);
     let filtered: String = base
         .chars()
-        .filter(|character| !character.is_control())
+        .filter(|character| {
+            !character.is_control()
+                && !matches!(
+                    character,
+                    '\u{200b}'..='\u{200f}'
+                        | '\u{202a}'..='\u{202e}'
+                        | '\u{2060}'..='\u{2069}'
+                        | '\u{feff}'
+                )
+        })
         .collect();
-    let trimmed = filtered.trim();
+    let trimmed = filtered
+        .trim()
+        .trim_end_matches(|character| character == '.' || character == ' ');
     if trimmed.is_empty() {
         return "unnamed-file".to_string();
     }

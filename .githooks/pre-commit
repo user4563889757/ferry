@@ -1,0 +1,15 @@
+#!/bin/sh
+# Block commits that contain local secrets or obvious credential shapes, and
+# keep the JavaScript parseable. Keep this fast; CI does the full test run.
+set -eu
+cd "$(dirname "$0")/.."
+
+sh scripts/check-secrets.sh --staged
+
+staged_js="$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.js$' || true)"
+if [ -n "$staged_js" ]; then
+  printf '%s\n' "$staged_js" | while IFS= read -r file; do
+    [ -f "$file" ] || continue
+    node --check "$file"
+  done
+fi

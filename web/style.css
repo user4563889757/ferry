@@ -113,6 +113,21 @@ dialog::backdrop { background: rgba(5, 10, 7, .55); }
 .url { padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--soft); }
 .url strong { display: block; font-size: .75rem; }
 .url code { display: block; overflow: hidden; color: var(--muted); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
+.roles { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+.role {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+  padding: 18px; border: 1px solid var(--line); border-radius: 14px;
+  background: var(--soft); color: var(--ink); font: inherit; text-align: left;
+  cursor: pointer;
+}
+.role:hover, .role:focus-visible { border-color: var(--accent); outline: none; }
+.role-icon {
+  display: grid; place-items: center; width: 34px; height: 34px;
+  border-radius: 10px; background: var(--accent); color: var(--accent-ink);
+  font-size: 1.2rem; font-weight: 750;
+}
+.role strong { font-size: 1rem; }
+.role small { color: var(--muted); font-size: .78rem; }
 .unlock { display: flex; flex-direction: column; gap: 9px; }
 .unlock h2 { margin-bottom: 2px; }
 .unlock input { min-height: 42px; padding: 0 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--soft); color: var(--ink); font: inherit; }
@@ -134,4 +149,5 @@ details p { margin-top: 10px; margin-bottom: 0; }
   #qr-image { max-width: 190px; margin: 0 auto; }
   .row-actions { flex-direction: column; }
   .status { display: none; }
+  .roles { grid-template-columns: 1fr; }
 }

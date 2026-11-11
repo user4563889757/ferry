@@ -1,9 +1,9 @@
-import { apiError, getMeta, json } from "../../lib/http.js";
+import { apiError, getMeta, json, publicMeta } from "../../lib/http.js";
 
 export async function onRequestGet({ env, params }) {
   const meta = await getMeta(env, params.id);
   if (!meta) return apiError(404, "not_found", "File not found.");
-  return json(meta);
+  return json(publicMeta(meta));
 }
 
 export async function onRequestDelete({ env, params }) {

@@ -17,7 +17,9 @@
     </a>
     <div class="actions">
       <span id="status" class="status">connecting</span>
-      <button id="share-btn" class="btn" type="button">Share</button>
+      <button id="mode-btn" class="btn" type="button" hidden>Send files</button>
+      <button id="share-btn" class="btn" type="button" hidden>Share</button>
+      <button id="lock-btn" class="btn" type="button" hidden>Lock</button>
     </div>
   </header>
 
@@ -25,6 +27,7 @@
     <section class="intro">
       <h1>Move files across the room.</h1>
       <p id="lede">Drop anything here. It stays on this Ferry until you delete it, and interrupted uploads resume where they stopped.</p>
+      <p id="mode-note" class="muted small" hidden></p>
       <p id="server-line" class="muted">Connecting…</p>
     </section>
 
@@ -44,7 +47,7 @@
       <p id="queue-empty" class="empty">No transfers yet.</p>
     </section>
 
-    <section class="panel">
+    <section id="files-panel" class="panel" hidden>
       <div class="panel-head">
         <h2>Files here</h2>
         <button id="refresh-btn" class="btn small" type="button">Refresh</button>
@@ -54,13 +57,32 @@
       <p id="files-empty" class="empty">Files you send appear here for any device on this Ferry.</p>
     </section>
 
-    <details id="bt-panel" class="panel">
+    <details id="bt-panel" class="panel" hidden>
       <summary><strong>Bluetooth</strong> <span class="muted">— use the same resumable transfer over a Bluetooth PAN</span></summary>
       <p class="muted">Pair both devices, enable Bluetooth tethering on one of them, join the PAN from the other, then open the address marked <em>Bluetooth PAN</em> in Share. Direct OBEX Bluetooth transfers cannot resume, so Ferry uses IP over Bluetooth instead.</p>
     </details>
   </main>
 
   <footer id="footer-note">Open source · MIT · resumable transfers</footer>
+
+  <dialog id="role-dialog">
+    <div class="dialog-head">
+      <h2>How do you want to use Ferry?</h2>
+    </div>
+    <p class="muted">Anyone can send files. Only someone with the share key can see, download, or delete them.</p>
+    <div class="roles">
+      <button id="role-send" class="role" type="button">
+        <span class="role-icon" aria-hidden="true">↑</span>
+        <strong>Send files</strong>
+        <small>No key. Public sends expire automatically.</small>
+      </button>
+      <button id="role-receive" class="role" type="button">
+        <span class="role-icon" aria-hidden="true">↓</span>
+        <strong>Receive &amp; manage</strong>
+        <small>Share key required. Download, share, delete.</small>
+      </button>
+    </div>
+  </dialog>
 
   <dialog id="share-dialog">
     <div class="dialog-head">
@@ -73,7 +95,7 @@
         <p class="label">Links</p>
         <div id="share-urls" class="urls"></div>
         <button id="copy-link" class="btn primary" type="button">Copy link</button>
-        <p id="share-copy" class="muted small">The link contains this session's key. Keep it within people you trust.</p>
+        <p id="share-copy" class="muted small">The key comes after the <code>#</code>, so it is not sent to the server or written to access logs. Keep it within people you trust.</p>
       </div>
     </div>
   </dialog>

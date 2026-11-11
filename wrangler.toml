@@ -6,3 +6,13 @@ pages_build_output_dir = "./web"
 binding = "DB"
 database_name = "ferry"
 database_id = "d15e8ee0-d03a-4297-82b2-2900518220ea"
+
+# Public sending is on for this instance, with strict free-tier limits.
+# The owner can still unlock with the key for larger files and to manage data.
+[vars]
+PUBLIC_SEND = "1"
+PUBLIC_MAX_MB = "50"
+PUBLIC_EXPIRY_HOURS = "24"
+PUBLIC_DAILY_FILES = "20"
+PUBLIC_DAILY_MB = "200"
+PUBLIC_BUDGET_MB = "300"

@@ -1,26 +1,33 @@
+use std::collections::HashMap;
 use std::io;
-use std::sync::Arc;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
-use axum::http::{header, HeaderName, HeaderValue, StatusCode};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Path, Query, Request, State};
+use axum::http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use bytes::Bytes;
-use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC};
+use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use qrcode::QrCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 use tokio_util::io::ReaderStream;
 
+use crate::auth;
 use crate::net::Interface;
 use crate::store::{now_secs, FileMeta, FileStatus, NewUpload, Store, StoreError};
 use crate::VERSION;
 
 pub const MAX_CHUNK: usize = 8 * 1024 * 1024;
+const FAILURE_WINDOW: Duration = Duration::from_secs(10 * 60);
+const MAX_FAILURES: usize = 20;
+const MAX_TRACKED_CLIENTS: usize = 5000;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -29,19 +36,24 @@ pub struct AppState {
     pub device_name: Arc<str>,
     pub interfaces: Arc<Vec<Interface>>,
     pub started_at: u64,
+    pub auth_failures: Arc<Mutex<HashMap<IpAddr, Vec<Instant>>>>,
 }
 
 pub fn router(state: AppState) -> Router {
-    let api = Router::new()
-        .route("/health", get(health))
+    let gated = Router::new()
         .route("/info", get(info))
         .route("/files", get(list_files))
         .route("/files/{id}", get(get_file).delete(delete_file))
         .route("/files/{id}/download", get(download))
         .route("/uploads", post(create_upload))
         .route("/uploads/{id}", put(append_chunk))
-        .route("/qr", get(qr))
+        .route("/qr", post(qr))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_key));
+
+    let api = Router::new()
+        .route("/health", get(health))
+        .route("/session", post(create_session).delete(delete_session))
+        .merge(gated);
 
     Router::new()
         .route("/", get(index))
@@ -51,6 +63,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/api", api)
         .with_state(state)
         .layer(DefaultBodyLimit::max(MAX_CHUNK + 64 * 1024))
+        .layer(middleware::from_fn(csrf_guard))
         .layer(middleware::from_fn(security_headers))
 }
 
@@ -248,11 +261,17 @@ async fn download(
 
     let mut builder = Response::builder()
         .status(status)
-        .header(header::CONTENT_TYPE, meta.mime)
+        // Always serve an opaque attachment. Never reflect a user-supplied
+        // MIME type, so an uploaded HTML or SVG file cannot run on this origin.
+        .header(header::CONTENT_TYPE, "application/octet-stream")
         .header(header::CONTENT_LENGTH, length.to_string())
         .header(header::ACCEPT_RANGES, "bytes")
         .header(header::CACHE_CONTROL, "no-store")
         .header(header::CONTENT_DISPOSITION, content_disposition(&meta.name))
+        .header(
+            HeaderName::from_static("content-security-policy"),
+            "sandbox; default-src 'none'",
+        )
         .header(
             header::ETAG,
             format!("\"{}-{}\"", meta.id, meta.size),
@@ -271,11 +290,11 @@ async fn download(
 }
 
 #[derive(Deserialize)]
-struct QrQuery {
+struct QrRequest {
     text: String,
 }
 
-async fn qr(Query(query): Query<QrQuery>) -> Result<Response, ApiError> {
+async fn qr(Json(query): Json<QrRequest>) -> Result<Response, ApiError> {
     if query.text.is_empty() || query.text.len() > 2048 {
         return Err(ApiError::BadRequest(
             "QR text must be between 1 and 2048 bytes".to_string(),
@@ -292,7 +311,15 @@ async fn qr(Query(query): Query<QrQuery>) -> Result<Response, ApiError> {
     let headers = response.headers_mut();
     headers.insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_static("image/svg+xml"),
+        HeaderValue::from_static("image/svg+xml; charset=utf-8"),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_static("inline; filename=\"ferry-qr.svg\""),
+    );
+    headers.insert(
+        HeaderName::from_static("content-security-policy"),
+        HeaderValue::from_static("default-src 'none'; style-src 'none'"),
     );
     headers.insert(
         header::CACHE_CONTROL,
@@ -301,27 +328,107 @@ async fn qr(Query(query): Query<QrQuery>) -> Result<Response, ApiError> {
     Ok(response)
 }
 
+async fn create_session(State(state): State<AppState>, request: Request) -> Response {
+    let ip = client_ip(&request);
+    if let Some(retry) = retry_after(&state, ip) {
+        return too_many(retry);
+    }
+
+    let supplied = request
+        .headers()
+        .get("x-ferry-key")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+
+    if !auth::constant_time_eq(supplied.as_bytes(), state.key.as_bytes()) {
+        record_failure(&state, ip);
+        return unauthorized();
+    }
+
+    clear_failures(&state, ip);
+    let Some(token) = auth::issue_session(&state.key) else {
+        return ApiError::Internal("could not sign a session".to_string()).into_response();
+    };
+
+    let secure = request
+        .headers()
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.eq_ignore_ascii_case("https"))
+        .unwrap_or(false);
+
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    let headers = response.headers_mut();
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    if let Ok(cookie) = HeaderValue::from_str(&session_cookie(&token, secure)) {
+        headers.insert(header::SET_COOKIE, cookie);
+    }
+    response
+}
+
+async fn delete_session() -> Response {
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    let headers = response.headers_mut();
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(
+        header::SET_COOKIE,
+        HeaderValue::from_static(
+            "ferry_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; \
+             Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+        ),
+    );
+    response
+}
+
+fn session_cookie(token: &str, secure: bool) -> String {
+    let mut cookie = format!(
+        "{}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}",
+        auth::SESSION_COOKIE,
+        auth::SESSION_TTL
+    );
+    if secure {
+        cookie.push_str("; Secure");
+    }
+    cookie
+}
+
 async fn require_key(
     State(state): State<AppState>,
     request: Request,
     next: Next,
 ) -> Response {
-    let supplied = request
+    let ip = client_ip(&request);
+    if let Some(retry) = retry_after(&state, ip) {
+        return too_many(retry);
+    }
+
+    let header_key = request
         .headers()
         .get("x-ferry-key")
+        .and_then(|value| value.to_str().ok());
+    let cookie_token = request
+        .headers()
+        .get(header::COOKIE)
         .and_then(|value| value.to_str().ok())
-        .map(str::to_owned)
-        .or_else(|| query_param(request.uri().query(), "key"));
+        .and_then(|value| cookie_value(value, auth::SESSION_COOKIE));
 
-    let authorized = supplied
-        .as_deref()
-        .map(|value| constant_time_eq(value.as_bytes(), state.key.as_bytes()))
-        .unwrap_or(false);
+    let authorized = header_key
+        .map(|value| auth::constant_time_eq(value.as_bytes(), state.key.as_bytes()))
+        .unwrap_or(false)
+        || cookie_token
+            .map(|value| auth::verify_session(&state.key, &value))
+            .unwrap_or(false);
 
     if authorized {
+        clear_failures(&state, ip);
         return next.run(request).await;
     }
 
+    record_failure(&state, ip);
+    unauthorized()
+}
+
+fn unauthorized() -> Response {
     let mut response = (
         StatusCode::UNAUTHORIZED,
         Json(json!({
@@ -337,7 +444,147 @@ async fn require_key(
     response
 }
 
+fn too_many(retry: u64) -> Response {
+    let mut response = (
+        StatusCode::TOO_MANY_REQUESTS,
+        Json(json!({
+            "error": "rate_limited",
+            "message": "Too many failed attempts. Try again later."
+        })),
+    )
+        .into_response();
+    if let Ok(value) = HeaderValue::from_str(&retry.to_string()) {
+        response.headers_mut().insert(header::RETRY_AFTER, value);
+    }
+    response
+}
+
+fn cookie_value(header: &str, name: &str) -> Option<String> {
+    for part in header.split(';') {
+        let Some((key, value)) = part.split_once('=') else {
+            continue;
+        };
+        if key.trim() == name {
+            return Some(value.trim().to_string());
+        }
+    }
+    None
+}
+
+fn client_ip(request: &Request) -> Option<IpAddr> {
+    request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|info| info.0.ip())
+}
+
+fn retry_after(state: &AppState, ip: Option<IpAddr>) -> Option<u64> {
+    let ip = ip?;
+    let mut tracked = state.auth_failures.lock().ok()?;
+    let hits = tracked.get_mut(&ip)?;
+    hits.retain(|time| time.elapsed() < FAILURE_WINDOW);
+    if hits.is_empty() {
+        tracked.remove(&ip);
+        return None;
+    }
+    if hits.len() < MAX_FAILURES {
+        return None;
+    }
+    Some(
+        FAILURE_WINDOW
+            .saturating_sub(hits[0].elapsed())
+            .as_secs()
+            .max(1),
+    )
+}
+
+fn record_failure(state: &AppState, ip: Option<IpAddr>) {
+    let Some(ip) = ip else {
+        return;
+    };
+    let Ok(mut tracked) = state.auth_failures.lock() else {
+        return;
+    };
+    if tracked.len() > MAX_TRACKED_CLIENTS {
+        tracked.retain(|_, hits| {
+            hits.retain(|time| time.elapsed() < FAILURE_WINDOW);
+            !hits.is_empty()
+        });
+    }
+    let hits = tracked.entry(ip).or_default();
+    hits.retain(|time| time.elapsed() < FAILURE_WINDOW);
+    hits.push(Instant::now());
+    if hits.len() > MAX_FAILURES {
+        hits.remove(0);
+    }
+}
+
+fn clear_failures(state: &AppState, ip: Option<IpAddr>) {
+    let Some(ip) = ip else {
+        return;
+    };
+    if let Ok(mut tracked) = state.auth_failures.lock() {
+        tracked.remove(&ip);
+    }
+}
+
+async fn csrf_guard(request: Request, next: Next) -> Response {
+    let unsafe_method = matches!(
+        *request.method(),
+        Method::POST | Method::PUT | Method::PATCH | Method::DELETE
+    );
+
+    if unsafe_method {
+        if request
+            .headers()
+            .get("sec-fetch-site")
+            .and_then(|value| value.to_str().ok())
+            == Some("cross-site")
+        {
+            return forbidden();
+        }
+
+        if let Some(origin) = request
+            .headers()
+            .get(header::ORIGIN)
+            .and_then(|value| value.to_str().ok())
+        {
+            let host = request
+                .headers()
+                .get(header::HOST)
+                .and_then(|value| value.to_str().ok());
+            let origin_host = origin
+                .strip_prefix("http://")
+                .or_else(|| origin.strip_prefix("https://"))
+                .map(|rest| rest.split('/').next().unwrap_or(rest));
+            if origin == "null" || origin_host.is_none() || origin_host != host {
+                return forbidden();
+            }
+        }
+    }
+
+    next.run(request).await
+}
+
+fn forbidden() -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({
+            "error": "cross_origin",
+            "message": "Cross-origin state changes are not allowed."
+        })),
+    )
+        .into_response()
+}
+
 async fn security_headers(request: Request, next: Next) -> Response {
+    let secure_transport = request
+        .headers()
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.eq_ignore_ascii_case("https"))
+        .unwrap_or(false);
+
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
     headers.insert(
@@ -352,17 +599,23 @@ async fn security_headers(request: Request, next: Next) -> Response {
         header::REFERRER_POLICY,
         HeaderValue::from_static("no-referrer"),
     );
-    headers.insert(
-        HeaderName::from_static("content-security-policy"),
-        HeaderValue::from_static(
-            "default-src 'self'; img-src 'self' data:; style-src 'self'; \
-             script-src 'self'; connect-src 'self'; base-uri 'none'; \
-             form-action 'self'; frame-ancestors 'none'",
-        ),
-    );
+    if !headers.contains_key(header::CONTENT_SECURITY_POLICY) {
+        headers.insert(
+            HeaderName::from_static("content-security-policy"),
+            HeaderValue::from_static(
+                "default-src 'self'; base-uri 'none'; object-src 'none'; \
+                 frame-src 'none'; frame-ancestors 'none'; worker-src 'none'; \
+                 manifest-src 'self'; img-src 'self' data:; media-src 'none'; \
+                 style-src 'self'; script-src 'self'; connect-src 'self'; \
+                 form-action 'self'; require-trusted-types-for 'script'",
+            ),
+        );
+    }
     headers.insert(
         HeaderName::from_static("permissions-policy"),
-        HeaderValue::from_static("geolocation=(), microphone=(), camera=()"),
+        HeaderValue::from_static(
+            "geolocation=(), microphone=(), camera=(), usb=(), serial=(), payment=()",
+        ),
     );
     headers.insert(
         HeaderName::from_static("cross-origin-opener-policy"),
@@ -372,33 +625,21 @@ async fn security_headers(request: Request, next: Next) -> Response {
         HeaderName::from_static("cross-origin-resource-policy"),
         HeaderValue::from_static("same-origin"),
     );
+    headers.insert(
+        HeaderName::from_static("x-permitted-cross-domain-policies"),
+        HeaderValue::from_static("none"),
+    );
+    headers.insert(
+        HeaderName::from_static("x-robots-tag"),
+        HeaderValue::from_static("noindex, nofollow, noarchive"),
+    );
+    if secure_transport {
+        headers.insert(
+            header::STRICT_TRANSPORT_SECURITY,
+            HeaderValue::from_static("max-age=31536000"),
+        );
+    }
     response
-}
-
-fn query_param(query: Option<&str>, name: &str) -> Option<String> {
-    let query = query?;
-    for pair in query.split('&') {
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        if key == name {
-            return Some(
-                percent_decode_str(value)
-                    .decode_utf8_lossy()
-                    .into_owned(),
-            );
-        }
-    }
-    None
-}
-
-fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    if left.len() != right.len() {
-        return false;
-    }
-    let mut difference = 0u8;
-    for (a, b) in left.iter().zip(right) {
-        difference |= a ^ b;
-    }
-    difference == 0
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -575,6 +816,7 @@ mod tests {
             device_name: Arc::from("Test Ferry"),
             interfaces: Arc::new(Vec::new()),
             started_at: now_secs(),
+            auth_failures: Arc::new(Mutex::new(HashMap::new())),
         };
         (router(state), directory)
     }
@@ -820,5 +1062,152 @@ mod tests {
         let resumed: FileMeta = body_json(response).await;
         assert_eq!(resumed.id, first.id);
         assert_eq!(resumed.offset, 2);
+    }
+
+    #[tokio::test]
+    async fn rejects_keys_in_the_query_string() {
+        let (app, _directory) = app().await;
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/info?key=test-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn exchanges_the_key_for_a_session_cookie() {
+        let (app, _directory) = app().await;
+        let response = app
+            .clone()
+            .oneshot(request(Method::POST, "/api/session", Body::empty()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        let cookie = response
+            .headers()
+            .get(header::SET_COOKIE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_string();
+        assert!(cookie.starts_with("ferry_session="));
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/info")
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/session")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert!(
+            response
+                .headers()
+                .get(header::SET_COOKIE)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .contains("Max-Age=0")
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_cross_origin_state_changes() {
+        let (app, _directory) = app().await;
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/session")
+                    .header("x-ferry-key", "test-key")
+                    .header(header::ORIGIN, "https://evil.example")
+                    .header(header::HOST, "127.0.0.1:8787")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn serves_downloads_as_attachments() {
+        let (app, _directory) = app().await;
+        let response = app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/api/uploads",
+                Body::from(
+                    json!({
+                        "name": "page.html",
+                        "size": 4,
+                        "mime": "text/html"
+                    })
+                    .to_string(),
+                ),
+            ))
+            .await
+            .unwrap();
+        let meta: FileMeta = body_json(response).await;
+        let response = app
+            .clone()
+            .oneshot(request(
+                Method::PUT,
+                &format!("/api/uploads/{}?offset=0", meta.id),
+                Body::from("<h1>"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/files/{}/download", meta.id))
+                    .header("x-ferry-key", "test-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/octet-stream"
+        );
+        assert!(
+            response
+                .headers()
+                .get(header::CONTENT_DISPOSITION)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("attachment;")
+        );
     }
 }
