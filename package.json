@@ -24,6 +24,6 @@
     "qrcode-generator": "2.0.4"
   },
   "devDependencies": {
-    "wrangler": "4.157.0"
+    "wrangler": "4.158.0"
   }
 }
